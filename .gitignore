@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.venv
+*.egg
+
+# Node
+node_modules/
+.next/
+out/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test
+.coverage
+htmlcov/
+.pytest_cache/
+test-results/
+playwright-report/
+
+# Alembic
+*.pyc
+
+# Supabase (unused)
+supabase/
