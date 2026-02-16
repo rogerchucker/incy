@@ -329,8 +329,8 @@ def _check_snapshot_escalations(db):
             db.execute(
                 text("""
                     INSERT INTO notification_attempts
-                    (id, incident_id, user_id, channel, status, attempt_number, next_attempt_at, created_at, updated_at)
-                    VALUES (gen_random_uuid(), :incident_id, :user_id, 'email', 'queued', 1, NOW(), NOW(), NOW())
+                    (id, incident_id, user_id, channel, status, attempt_number, max_attempts, next_attempt_at, created_at, updated_at)
+                    VALUES (gen_random_uuid(), :incident_id, :user_id, 'email', 'queued', 1, 5, NOW(), NOW(), NOW())
                 """),
                 {"incident_id": inc_id, "user_id": target_user_id},
             )
@@ -393,8 +393,8 @@ def _check_legacy_escalations(db):
             db.execute(
                 text("""
                     INSERT INTO notification_attempts
-                    (id, incident_id, user_id, channel, status, attempt_number, next_attempt_at, created_at, updated_at)
-                    VALUES (gen_random_uuid(), :incident_id, :user_id, 'email', 'queued', 1, NOW(), NOW(), NOW())
+                    (id, incident_id, user_id, channel, status, attempt_number, max_attempts, next_attempt_at, created_at, updated_at)
+                    VALUES (gen_random_uuid(), :incident_id, :user_id, 'email', 'queued', 1, 5, NOW(), NOW(), NOW())
                 """),
                 {"incident_id": inc_id, "user_id": secondary[0]},
             )
