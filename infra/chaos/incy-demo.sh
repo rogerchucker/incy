@@ -5,13 +5,12 @@ set -euo pipefail
 # incy-demo.sh — Chaos demo script for Incy + Grafana integration
 #
 # Usage:
-#   ./incy-demo.sh setup      Deploy MongoDB, start ngrok, configure Grafana
-#   ./incy-demo.sh trigger     Trigger ALL failure scenarios
-#   ./incy-demo.sh trigger N   Trigger specific scenario (1-4)
-#   ./incy-demo.sh reset       Reset ALL scenarios
-#   ./incy-demo.sh reset N     Reset specific scenario (1-4)
-#   ./incy-demo.sh teardown    Remove MongoDB, stop ngrok, clean up
-#   ./incy-demo.sh status      Show current state
+#   ./incy-demo.sh setup              Deploy MongoDB, start ngrok, configure Grafana
+#   ./incy-demo.sh trigger [N]        Trigger failure scenarios (all or 1-4)
+#   ./incy-demo.sh reset [N]          Reset failure scenarios (alerts auto-resolve via Grafana)
+#   ./incy-demo.sh teardown           Remove k8s resources (preserves Grafana config + ngrok)
+#   ./incy-demo.sh teardown-grafana   Full cleanup: remove alert rules, contact point, policy, stop ngrok
+#   ./incy-demo.sh status             Show current state
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -552,7 +551,8 @@ _reset_4() {
 # TEARDOWN
 # ---------------------------------------------------------------------------
 cmd_teardown() {
-    log "Tearing down Incy demo environment..."
+    log "Tearing down Incy demo k8s resources..."
+    log "Note: Grafana config (alert rules, contact point, notification policy) and ngrok are preserved."
 
     # Reset all scenarios first
     log "Resetting all scenarios..."
@@ -565,6 +565,15 @@ cmd_teardown() {
     log "Removing MongoDB..."
     kubectl delete -f "$SCRIPT_DIR/../k8s/mongodb.yaml" --ignore-not-found
     ok "MongoDB removed"
+
+    echo ""
+    ok "Teardown complete!"
+    log "Grafana alert rules, contact point, notification policy, and ngrok are still active."
+    log "To fully clean up Grafana, run: $0 teardown-grafana"
+}
+
+cmd_teardown_grafana() {
+    log "Removing all Grafana configuration for Incy..."
 
     # Delete alert rules
     log "Removing Grafana alert rules..."
@@ -617,7 +626,7 @@ print(json.dumps(policy))
     rm -f "$STATE_FILE"
 
     echo ""
-    ok "Teardown complete!"
+    ok "Grafana teardown complete!"
 }
 
 # ---------------------------------------------------------------------------
@@ -699,13 +708,22 @@ for k,v in state.items():
 # MAIN
 # ---------------------------------------------------------------------------
 case "${1:-}" in
-    setup)    cmd_setup ;;
-    trigger)  cmd_trigger "${2:-all}" ;;
-    reset)    cmd_reset "${2:-all}" ;;
-    teardown) cmd_teardown ;;
-    status)   cmd_status ;;
+    setup)              cmd_setup ;;
+    trigger)            cmd_trigger "${2:-all}" ;;
+    reset)              cmd_reset "${2:-all}" ;;
+    teardown)           cmd_teardown ;;
+    teardown-grafana)   cmd_teardown_grafana ;;
+    status)             cmd_status ;;
     *)
-        echo "Usage: $0 {setup|trigger [N]|reset [N]|teardown|status}"
+        echo "Usage: $0 {setup|trigger [N]|reset [N]|teardown|teardown-grafana|status}"
+        echo ""
+        echo "Commands:"
+        echo "  setup             Deploy MongoDB, start ngrok, configure Grafana"
+        echo "  trigger [N]       Trigger failure scenarios (all or 1-4)"
+        echo "  reset [N]         Reset failure scenarios (alerts auto-resolve)"
+        echo "  teardown          Remove k8s resources only (preserves Grafana + ngrok)"
+        echo "  teardown-grafana  Remove Grafana alert rules, contact point, policy, stop ngrok"
+        echo "  status            Show current state"
         echo ""
         echo "Scenarios:"
         echo "  1  CrashLoop (catalog-api & payments-api)"

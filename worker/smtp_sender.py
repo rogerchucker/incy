@@ -60,4 +60,10 @@ Please acknowledge or resolve this incident.
         worker_settings.smtp_port,
         timeout=TIMEOUT_SECONDS,
     ) as server:
+        server.ehlo()
+        if worker_settings.smtp_port != 25:
+            server.starttls()
+            server.ehlo()
+        if worker_settings.smtp_user:
+            server.login(worker_settings.smtp_user, worker_settings.smtp_password)
         server.send_message(msg)

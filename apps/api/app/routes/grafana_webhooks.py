@@ -28,11 +28,11 @@ SEVERITY_MAP = {
 
 
 def _build_summary(alert: GrafanaAlert) -> str:
-    detail = alert.annotations.summary or alert.annotations.description or "No description"
+    """Build a short incident title from the alert. Annotations go into incident details separately."""
     name = alert.labels.alertname
     if name:
-        return f"{name}: {detail}"
-    return detail
+        return name
+    return alert.annotations.summary or alert.annotations.description or "Grafana Alert"
 
 
 def _map_severity(raw: str) -> str:

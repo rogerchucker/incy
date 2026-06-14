@@ -1,0 +1,58 @@
+# Web frontend: runs the host-built Next.js standalone bundle from the incy-web-dist
+# PVC on a stock node image. (No custom image because Docker Desktop is unavailable on
+# the build host — see 61-web-dist-loader.yaml.)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: incy-web
+  namespace: incy
+  labels: { app: incy-web }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }   # RWO volume: avoid two pods mounting at once
+  selector:
+    matchLabels: { app: incy-web }
+  template:
+    metadata:
+      labels: { app: incy-web }
+    spec:
+      containers:
+        - name: web
+          image: node:22-slim
+          workingDir: /app
+          command: ["node", "server.js"]
+          env:
+            - name: PORT
+              value: "3000"
+            - name: HOSTNAME
+              value: "0.0.0.0"
+            - name: NODE_ENV
+              value: "production"
+          ports:
+            - containerPort: 3000
+          volumeMounts:
+            - name: dist
+              mountPath: /app
+              readOnly: true
+          readinessProbe:
+            httpGet: { path: /, port: 3000 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 512Mi }
+      volumes:
+        - name: dist
+          persistentVolumeClaim:
+            claimName: incy-web-dist
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: incy-web
+  namespace: incy
+spec:
+  selector: { app: incy-web }
+  ports:
+    - port: 3000
+      targetPort: 3000

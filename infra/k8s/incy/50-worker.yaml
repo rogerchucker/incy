@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: incy-worker
+  namespace: incy
+  labels: { app: incy-worker }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: incy-worker }
+  template:
+    metadata:
+      labels: { app: incy-worker }
+    spec:
+      imagePullSecrets:
+        - name: registry-raj-agent-idp
+      containers:
+        - name: worker
+          image: registry.digitalocean.com/raj-agent-idp/agent-idp:incy-api-v2
+          imagePullPolicy: Always
+          workingDir: /app
+          command: ["python", "-m", "worker.main"]
+          envFrom:
+            - secretRef: { name: incy-db }
+            - configMapRef: { name: incy-config }
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 256Mi }

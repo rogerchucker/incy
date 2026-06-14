@@ -1,0 +1,138 @@
+# DigitalOcean App Platform spec
+# Deploy with: doctl apps create --spec infra/app.yaml
+# Update with: doctl apps update <app-id> --spec infra/app.yaml
+#
+# Before first deploy, replace:
+#   - your-github-org  → your actual GitHub org/user
+#   - SMTP env vars    → real credentials from Mailgun/Resend/etc.
+#
+# After first deploy, note the api.PUBLIC_URL and set NEXT_PUBLIC_API_URL if
+# the build did not pick it up automatically via the ${api.PUBLIC_URL} reference.
+
+name: incy
+region: nyc
+
+databases:
+  - name: db
+    engine: PG
+    version: "16"
+    size: db-s-1vcpu-1gb
+    num_nodes: 1
+
+services:
+  # ── FastAPI ──────────────────────────────────────────────────────────────
+  - name: api
+    source_dir: /
+    environment_slug: python
+    github:
+      repo: your-github-org/incy
+      branch: main
+      deploy_on_push: true
+    build_command: pip install .
+    run_command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    http_port: 8000
+    health_check:
+      http_path: /health
+      initial_delay_seconds: 10
+    instance_size_slug: basic-xxs
+    instance_count: 1
+    envs:
+      - key: PYTHONPATH
+        value: apps/api
+      # DO provides postgresql:// — config.py auto-converts to postgresql+psycopg://
+      - key: INCY_DATABASE_URL
+        scope: RUN_TIME
+        value: ${db.DATABASE_URL}
+      # Allow requests from the web frontend
+      - key: INCY_CORS_ORIGINS
+        scope: RUN_TIME
+        value: '["${web.PUBLIC_URL}"]'
+      # SMTP — replace with real provider values
+      - key: INCY_SMTP_HOST
+        scope: RUN_TIME
+        value: smtp.mailgun.org          # e.g. smtp.mailgun.org or smtp.resend.com
+      - key: INCY_SMTP_PORT
+        value: "587"
+      - key: INCY_SMTP_FROM
+        value: alerts@yourdomain.com     # replace
+      - key: INCY_SMTP_USER
+        scope: RUN_TIME
+        type: SECRET
+        value: REPLACE_WITH_SMTP_USER
+      - key: INCY_SMTP_PASSWORD
+        scope: RUN_TIME
+        type: SECRET
+        value: REPLACE_WITH_SMTP_PASSWORD
+
+  # ── Next.js ──────────────────────────────────────────────────────────────
+  - name: web
+    source_dir: apps/web
+    environment_slug: node-js
+    github:
+      repo: your-github-org/incy
+      branch: main
+      deploy_on_push: true
+    build_command: npm install && npm run build
+    run_command: npm start
+    http_port: 3000
+    health_check:
+      http_path: /
+    instance_size_slug: basic-xxs
+    instance_count: 1
+    envs:
+      # Baked into the JS bundle at build time — must be BUILD_TIME scope
+      - key: NEXT_PUBLIC_API_URL
+        scope: BUILD_TIME
+        value: ${api.PUBLIC_URL}
+
+workers:
+  # ── Notification + escalation worker ─────────────────────────────────────
+  - name: worker
+    source_dir: /
+    environment_slug: python
+    github:
+      repo: your-github-org/incy
+      branch: main
+      deploy_on_push: true
+    build_command: pip install .
+    run_command: python -m worker.main
+    instance_size_slug: basic-xxs
+    instance_count: 1
+    envs:
+      - key: INCY_DATABASE_URL
+        scope: RUN_TIME
+        value: ${db.DATABASE_URL}
+      - key: INCY_SMTP_HOST
+        scope: RUN_TIME
+        value: smtp.mailgun.org          # replace
+      - key: INCY_SMTP_PORT
+        value: "587"
+      - key: INCY_SMTP_FROM
+        value: alerts@yourdomain.com     # replace
+      - key: INCY_SMTP_USER
+        scope: RUN_TIME
+        type: SECRET
+        value: REPLACE_WITH_SMTP_USER
+      - key: INCY_SMTP_PASSWORD
+        scope: RUN_TIME
+        type: SECRET
+        value: REPLACE_WITH_SMTP_PASSWORD
+
+jobs:
+  # ── Run Alembic migrations before each deploy ─────────────────────────────
+  - name: migrate
+    source_dir: /
+    environment_slug: python
+    github:
+      repo: your-github-org/incy
+      branch: main
+    build_command: pip install .
+    run_command: sh -c 'cd apps/api && alembic upgrade head'
+    instance_size_slug: basic-xxs
+    kind: PRE_DEPLOY
+    envs:
+      - key: PYTHONPATH
+        value: apps/api
+      - key: INCY_DATABASE_URL
+        scope: RUN_TIME
+        value: ${db.DATABASE_URL}

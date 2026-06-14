@@ -1,0 +1,34 @@
+# Holds the host-built Next.js standalone bundle. Populated once via a loader pod,
+# then mounted read-only by the web Deployment. (Docker Desktop is unavailable on the
+# build host, so we ship the prebuilt bundle instead of a container image.)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: incy-web-dist
+  namespace: incy
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: do-block-storage
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: incy-web-loader
+  namespace: incy
+  labels: { app: incy-web-loader }
+spec:
+  restartPolicy: Never
+  containers:
+    - name: loader
+      image: node:22-slim
+      command: ["sh", "-c", "mkdir -p /dist && sleep 3600"]
+      volumeMounts:
+        - name: dist
+          mountPath: /dist
+  volumes:
+    - name: dist
+      persistentVolumeClaim:
+        claimName: incy-web-dist

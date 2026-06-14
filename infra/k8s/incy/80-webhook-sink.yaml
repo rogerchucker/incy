@@ -1,0 +1,90 @@
+# Demo webhook receiver: logs each delivery and verifies the HMAC-SHA256 signature
+# (X-Incy-Signature-256). Used to demonstrate Incy firing an outbound webhook for a
+# sev0 (critical) incident. Not part of the core app.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: incy-webhook-sink-src
+  namespace: incy
+data:
+  sink.py: |
+    import hashlib, hmac, http.server, json, os
+
+    SECRET = os.environ.get("WEBHOOK_SECRET", "")
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length", 0) or 0)
+            body = self.rfile.read(n)
+            sig = self.headers.get("X-Incy-Signature-256", "")
+            print("=" * 72, flush=True)
+            print(f"[WEBHOOK RECEIVED] POST {self.path}", flush=True)
+            print(f"  User-Agent: {self.headers.get('User-Agent','')}", flush=True)
+            print(f"  X-Incy-Signature-256: {sig}", flush=True)
+            if SECRET:
+                expected = "sha256=" + hmac.new(SECRET.encode(), body, hashlib.sha256).hexdigest()
+                ok = hmac.compare_digest(expected, sig)
+                print(f"  signature: {'VALID (authentic Incy delivery)' if ok else 'INVALID expected=' + expected}", flush=True)
+            try:
+                data = json.loads(body)
+                inc = data.get("data", {}).get("incident", {})
+                print(f"  >>> {data.get('event_type')} | severity={inc.get('severity')} "
+                      f"| #{inc.get('incident_number')} | status={inc.get('status')} "
+                      f"| {inc.get('title')}", flush=True)
+                print("  payload: " + json.dumps(data, indent=2), flush=True)
+            except Exception:
+                print("  raw body: " + repr(body), flush=True)
+            self.send_response(200); self.end_headers(); self.wfile.write(b'{"ok":true}')
+        def log_message(self, *a):
+            pass
+
+    port = int(os.environ.get("PORT", "8080"))
+    print(f"webhook-sink listening on :{port} (verify={'on' if SECRET else 'off'})", flush=True)
+    http.server.HTTPServer(("0.0.0.0", port), H).serve_forever()
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: incy-webhook-sink
+  namespace: incy
+  labels: { app: incy-webhook-sink }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: incy-webhook-sink }
+  template:
+    metadata:
+      labels: { app: incy-webhook-sink }
+    spec:
+      containers:
+        - name: sink
+          image: python:3.13-slim
+          command: ["python", "/app/sink.py"]
+          env:
+            - name: PORT
+              value: "8080"
+            - name: WEBHOOK_SECRET
+              value: ""   # patched after the subscription is created
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: src
+              mountPath: /app
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { memory: 128Mi }
+      volumes:
+        - name: src
+          configMap:
+            name: incy-webhook-sink-src
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: incy-webhook-sink
+  namespace: incy
+spec:
+  selector: { app: incy-webhook-sink }
+  ports:
+    - port: 8080
+      targetPort: 8080

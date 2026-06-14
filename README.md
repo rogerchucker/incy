@@ -88,11 +88,13 @@ All tests use Playwright with `page.route()` API mocking — no running backend 
 
 ```
 apps/
-  api/          FastAPI backend (Python)
-  web/          Next.js frontend (App Router, Tailwind, shadcn/ui)
-  worker/       Notification worker (Python, polls DB)
+  api/            FastAPI backend (Python, SQLAlchemy, Alembic)
+  web/            Next.js frontend (App Router, Tailwind, shadcn/ui)
+  worker/worker/  Notification & escalation worker (Python, polls DB)
 infra/
   docker-compose.yml   Postgres 16 + Mailpit
+  chaos/               Grafana integration chaos demo script
+  k8s/                 Kubernetes manifests for demo workloads
 ```
 
 ### API Endpoints
@@ -160,11 +162,13 @@ User, Team, Membership, Service, Integration, Event, Alert, Incident, Schedule, 
 ### Key Design Decisions
 
 - **Auth:** Hardcoded seed user + `X-User-Id` header (simplest for MVP).
-- **On-call:** Schedule-based rotation with override support, or direct `primary_oncall_user_id` + `secondary_oncall_user_id` on Service.
-- **Escalation:** Snapshot-based — policy is copied to the incident at creation time.
-- **Notifications:** DB-backed queue — no Redis/RabbitMQ dependency.
-- **Webhooks:** HMAC-SHA256 signed, delivered by the same worker pipeline.
-- **Grafana routing:** `route_by_label` on integrations enables one webhook endpoint to route alerts to different services dynamically.
+- **On-call:** Schedule-based rotation with override support, or direct `primary_oncall_user_id` + `secondary_oncall_user_id` on Service. On-call resolution walks layers bottom-up, then checks overrides.
+- **Escalation:** Snapshot-based — policy (with current on-call resolved) is frozen onto the incident at creation time. In-flight incidents are unaffected by policy edits.
+- **Notifications:** DB-backed queue — no Redis/RabbitMQ dependency. Worker uses raw SQL with `FOR UPDATE SKIP LOCKED` for safe concurrent claiming.
+- **Webhooks:** HMAC-SHA256 signed (`X-Incy-Signature-256`), delivered by the same worker pipeline with 10s timeout.
+- **Grafana routing:** `route_by_label` on integrations enables one webhook endpoint to route alerts to different services dynamically. Dedup key `grafana-{fingerprint}` is globally unique, so resolved alerts find the correct alert regardless of which service it was routed to.
+- **Concurrency:** All incident state transitions use `SELECT ... FOR UPDATE` to prevent race conditions.
+- **Idempotency:** Events carry a unique `idempotency_key`; duplicates are safely rejected.
 - **E2E tests:** Playwright `page.route()` mocking — tests run without a backend.
 
 ## Running Locally
@@ -203,8 +207,10 @@ The seed script creates:
 - **Team:** Platform Team
 - **Users:** Alice Engineer (alice@example.com), Bob Oncall (bob@example.com)
 - **Service:** Payment API (primary on-call: Alice, secondary: Bob)
-- **Integration:** Datadog Webhook
-- **Incidents:** 3 sample incidents (one triggered, one acknowledged, one resolved)
+- **Integration:** Datadog Webhook (`int_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`)
+- **Schedule:** Primary On-Call Rotation (weekly, Alice → Bob)
+- **Escalation policy:** Platform Default (2 rules: page on-call from schedule → page Bob directly, loops 2x)
+- **Incidents:** 3 sample incidents (one triggered, one acknowledged, one resolved) with audit log entries
 - **Webhook subscription:** Sample outbound webhook
 
 ### Smoke Test
@@ -272,6 +278,68 @@ Deliveries retry with exponential backoff + jitter, up to 5 attempts, with a 10-
 | `make test-e2e` | Run Playwright E2E tests |
 | `make lint` | Run ruff + eslint |
 
+### Configuration
+
+All settings are configured via environment variables with the `INCY_` prefix. Defaults work out of the box for local development.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `INCY_DATABASE_URL` | `postgresql+psycopg://incy:incy@localhost:5433/incy` | Postgres connection string |
+| `INCY_SMTP_HOST` | `localhost` | SMTP server for email notifications |
+| `INCY_SMTP_PORT` | `1025` | SMTP port (Mailpit default) |
+| `INCY_SMTP_FROM` | `incy@example.com` | Sender email address |
+| `INCY_CORS_ORIGINS` | `["http://localhost:3000"]` | Allowed CORS origins |
+| `INCY_RATE_LIMIT_PER_MINUTE` | `120` | API rate limit per minute |
+| `INCY_WORKER_POLL_INTERVAL` | `5` | Worker poll interval (seconds) |
+| `INCY_ESCALATION_TIMEOUT_SECONDS` | `300` | Legacy L1→L2 escalation timeout |
+| `INCY_WEBHOOK_TIMEOUT` | `10` | Outbound webhook HTTP timeout (seconds) |
+| `INCY_MAX_NOTIFICATION_ATTEMPTS` | `5` | Max retry attempts before dead-lettering |
+
+### Worker Internals
+
+The notification worker (`make dev-worker`) is a single Python process that polls the DB in a loop:
+
+1. **Claim notifications** — Atomically claims a batch of due notifications using `FOR UPDATE SKIP LOCKED` (safe for multiple workers).
+2. **Send** — Delivers via SMTP (email) or HTTP (webhooks). Skips notifications for already-acknowledged/resolved incidents.
+3. **Retry on failure** — Exponential backoff: `min(2^attempt, 300)` seconds + random jitter up to 50%. Dead-lettered after 5 attempts.
+4. **Check escalations** (every 6th cycle):
+   - **Snapshot-based**: Reads the frozen `escalation_policy_snapshot` JSONB on the incident, advances to the next rule, queues a notification for the target user/schedule, and sets `next_escalation_at`. Supports looping through all rules `num_loops` times.
+   - **Legacy L1→L2**: For incidents without a snapshot, escalates from `primary_oncall_user_id` to `secondary_oncall_user_id` after the configured timeout.
+5. **Audit logging** — Every notification sent and escalation step is recorded in `audit_logs`.
+
+### Chaos Demo (Grafana Integration)
+
+The script at `infra/chaos/incy-demo.sh` provides a turnkey demo of Incy receiving real Grafana alerts from a Kubernetes cluster.
+
+**Prerequisites:** A Kubernetes cluster with Prometheus + Grafana (e.g., DigitalOcean DOKS), `kubectl`, `ngrok`, and a running Incy instance.
+
+```bash
+# Full setup: deploy MongoDB, start ngrok, configure Grafana contact point + alert rules
+./infra/chaos/incy-demo.sh setup
+
+# Trigger failure scenarios (Pod CrashLoop, OOM Kill, MongoDB Down, Disk Pressure)
+./infra/chaos/incy-demo.sh trigger        # all 4
+./infra/chaos/incy-demo.sh trigger 1      # just scenario 1
+
+# Reset failures (alerts auto-resolve via Grafana)
+    ./infra/chaos/incy-demo.sh reset
+
+# Remove k8s resources only (preserves Grafana config + ngrok)
+./infra/chaos/incy-demo.sh teardown
+
+# Full cleanup: remove Grafana alert rules, contact point, notification policy, stop ngrok
+./infra/chaos/incy-demo.sh teardown-grafana
+
+# Show current state
+./infra/chaos/incy-demo.sh status
+```
+
+The 4 failure scenarios:
+1. **Pod CrashLoop** — Deploys a pod with an invalid command causing restart loops
+2. **OOM Kill** — Deploys a pod that exceeds its memory limit
+3. **MongoDB Down** — Scales MongoDB to 0 replicas
+4. **Disk Pressure** — Simulates disk pressure via a node label
+
 ### Running E2E Tests
 
 ```bash
@@ -279,3 +347,7 @@ cd apps/web && npx playwright test
 ```
 
 No running backend required — all API calls are mocked via Playwright route interception.
+
+## License
+
+[AGPL-3.0](LICENSE)

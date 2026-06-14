@@ -1,0 +1,105 @@
+# Tailscale node "incy" exposing the app on one HTTPS origin (https://incy.tail353042.ts.net).
+# Everything proxies to the web pod; Next.js rewrites forward /v1, /health, /docs, etc. to
+# the in-cluster API server-side. (Tailscale serve strips the mount prefix, so per-path
+# handlers to the API don't work — the web node owns routing instead.)
+# Mirrors the existing agent-idp-ts-proxy pattern.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: incy-ts-proxy
+  namespace: incy
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: incy-ts-proxy
+  namespace: incy
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: incy-ts-proxy
+  namespace: incy
+subjects:
+  - kind: ServiceAccount
+    name: incy-ts-proxy
+    namespace: incy
+roleRef:
+  kind: Role
+  name: incy-ts-proxy
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: incy-ts-serve
+  namespace: incy
+data:
+  serve.json: |
+    {
+      "TCP": {
+        "443": { "HTTPS": true }
+      },
+      "Web": {
+        "${TS_CERT_DOMAIN}:443": {
+          "Handlers": {
+            "/": { "Proxy": "http://incy-web.incy.svc.cluster.local:3000" }
+          }
+        }
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: incy-ts-proxy
+  namespace: incy
+  labels: { app: incy-ts-proxy }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: incy-ts-proxy }
+  template:
+    metadata:
+      labels: { app: incy-ts-proxy }
+    spec:
+      serviceAccountName: incy-ts-proxy
+      containers:
+        - name: tailscale
+          image: tailscale/tailscale:stable
+          env:
+            - name: TS_USERSPACE
+              value: "true"
+            - name: TS_KUBE_SECRET
+              value: incy-tailscale-state
+            - name: TS_HOSTNAME
+              value: incy
+            - name: TS_SERVE_CONFIG
+              value: /etc/tsconfig/serve.json
+            # Only used on first registration; ignored once state is persisted.
+            - name: TS_AUTHKEY
+              valueFrom:
+                secretKeyRef:
+                  name: incy-ts-auth
+                  key: TS_AUTHKEY
+                  optional: true
+            - name: POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+          volumeMounts:
+            - name: serve-config
+              mountPath: /etc/tsconfig
+              readOnly: true
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { memory: 128Mi }
+      volumes:
+        - name: serve-config
+          configMap:
+            name: incy-ts-serve

@@ -1,0 +1,23 @@
+# Image for the FastAPI API, the worker, and Alembic migrations.
+# Build context = repo root.  Command is overridden per-workload in k8s.
+FROM python:3.13-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app:/app/apps/api
+
+WORKDIR /app
+
+# Dependencies first for layer caching. psycopg[binary] ships its own libpq.
+COPY apps/api/requirements.txt ./apps/api/requirements.txt
+RUN pip install --no-cache-dir -r apps/api/requirements.txt
+
+# Application code
+COPY apps/api ./apps/api
+COPY worker ./worker
+
+# Default workload: the API. Worker/migrate override workdir+command in k8s.
+WORKDIR /app/apps/api
+EXPOSE 8000
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

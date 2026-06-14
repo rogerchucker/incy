@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.middleware.error_handler import register_error_handlers
 from app.middleware.rate_limiter import RateLimiterMiddleware
-from app.routes import events, incidents, services, teams, users, webhooks, schedules, escalation_policies, grafana_webhooks
+from app.routes import events, incidents, services, teams, users, webhooks, schedules, escalation_policies, grafana_webhooks, agent_tasks
 
 app = FastAPI(title="Incy", version="0.1.0")
 
@@ -33,6 +33,7 @@ app.include_router(webhooks.router, prefix="/v1")
 app.include_router(schedules.router, prefix="/v1")
 app.include_router(escalation_policies.router, prefix="/v1")
 app.include_router(grafana_webhooks.router, prefix="/v1")
+app.include_router(agent_tasks.router, prefix="/v1")
 
 
 @app.get("/health")

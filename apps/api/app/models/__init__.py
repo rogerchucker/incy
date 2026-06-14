@@ -15,6 +15,7 @@ from app.models.schedule_layer_user import ScheduleLayerUser
 from app.models.schedule_override import ScheduleOverride
 from app.models.escalation_policy import EscalationPolicy
 from app.models.escalation_rule import EscalationRule
+from app.models.agent_task_update import AgentTaskUpdate
 
 __all__ = [
     "User",
@@ -34,4 +35,5 @@ __all__ = [
     "ScheduleOverride",
     "EscalationPolicy",
     "EscalationRule",
+    "AgentTaskUpdate",
 ]

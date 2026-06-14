@@ -1,0 +1,25 @@
+# Runs Alembic migrations then idempotent seed. Re-runnable: seed no-ops if data exists.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: incy-migrate
+  namespace: incy
+spec:
+  backoffLimit: 6
+  template:
+    spec:
+      restartPolicy: OnFailure
+      imagePullSecrets:
+        - name: registry-raj-agent-idp
+      containers:
+        - name: migrate
+          image: registry.digitalocean.com/raj-agent-idp/agent-idp:incy-api-v2
+          imagePullPolicy: Always
+          workingDir: /app/apps/api
+          command: ["sh", "-c", "alembic upgrade head && python -m app.seed"]
+          envFrom:
+            - secretRef: { name: incy-db }
+            - configMapRef: { name: incy-config }
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 256Mi }

@@ -1,3 +1,4 @@
+import os
 import sys
 from pathlib import Path
 from logging.config import fileConfig
@@ -14,6 +15,13 @@ from app.models import *  # noqa: F401,F403
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
+
+# Override sqlalchemy.url with INCY_DATABASE_URL if set (e.g. in production)
+_db_url = os.environ.get("INCY_DATABASE_URL")
+if _db_url:
+    if _db_url.startswith("postgresql://"):
+        _db_url = _db_url.replace("postgresql://", "postgresql+psycopg://", 1)
+    config.set_main_option("sqlalchemy.url", _db_url)
 
 target_metadata = Base.metadata
 

@@ -289,7 +289,7 @@ def seed():
             id=WEBHOOK_ID,
             service_id=SERVICE_ID,
             url="http://localhost:8025/webhook",
-            secret="devsecret" + "0" * 56,
+            secret="devsecret" + "0" * 55,
             events="incident.triggered,incident.acknowledged,incident.resolved",
             active=True,
             description="Sample webhook for local dev",

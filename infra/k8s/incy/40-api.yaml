@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: incy-api
+  namespace: incy
+  labels: { app: incy-api }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: incy-api }
+  template:
+    metadata:
+      labels: { app: incy-api }
+    spec:
+      imagePullSecrets:
+        - name: registry-raj-agent-idp
+      containers:
+        - name: api
+          image: registry.digitalocean.com/raj-agent-idp/agent-idp:incy-api-v2
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - secretRef: { name: incy-db }
+            - configMapRef: { name: incy-config }
+          readinessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 512Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: incy-api
+  namespace: incy
+spec:
+  selector: { app: incy-api }
+  ports:
+    - port: 8000
+      targetPort: 8000

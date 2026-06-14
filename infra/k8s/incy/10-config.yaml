@@ -1,0 +1,28 @@
+# Shared app config + DB credentials. All settings use the INCY_ env prefix.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: incy-db
+  namespace: incy
+type: Opaque
+stringData:
+  POSTGRES_USER: incy
+  POSTGRES_PASSWORD: incy
+  POSTGRES_DB: incy
+  # Used by the API, worker, and migrate job (psycopg3 driver).
+  INCY_DATABASE_URL: postgresql+psycopg://incy:incy@incy-postgres.incy.svc.cluster.local:5432/incy
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: incy-config
+  namespace: incy
+data:
+  # Same-origin: the Tailscale node serves both web and /v1 API, so CORS is a no-op,
+  # but we set it explicitly for correctness.
+  INCY_CORS_ORIGINS: '["https://incy.tail353042.ts.net"]'
+  # Local-dev SMTP defaults are unreachable in-cluster; point at a noop.
+  # Replace with real SMTP creds to enable email paging.
+  INCY_SMTP_HOST: "localhost"
+  INCY_SMTP_PORT: "1025"
+  INCY_SMTP_FROM: "alerts@incy.local"
